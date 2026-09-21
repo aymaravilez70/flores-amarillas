@@ -42,8 +42,14 @@ export default function App() {
         if (data.de) setSenderName(data.de);
         if (data.flores && Array.isArray(data.flores)) {
           const merged = DEFAULT_FLOWERS.map((def, idx) => {
-            const found = data.flores.find(f => f.id === idx) || data.flores[idx];
-            return found ? { ...def, ...found } : def;
+            const found = data.flores.find(f => f.id === idx);
+            if (!found) return def;
+            return {
+              ...def,
+              ...(found.titulo ? { titulo: found.titulo } : {}),
+              ...(found.msg ? { msg: found.msg } : {}),
+              ...(found.foto !== undefined ? { foto: found.foto } : {})
+            };
           });
           setFlowers(merged);
         } else if (data.msg) {

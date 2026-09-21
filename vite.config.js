@@ -45,6 +45,32 @@ function imageUploadPlugin() {
           res.end('Method Not Allowed');
         }
       });
+
+      server.middlewares.use('/api/shorten', async (req, res) => {
+        try {
+          const parsedUrl = new URL(req.url, 'http://localhost');
+          const longUrl = parsedUrl.searchParams.get('url');
+          if (!longUrl) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'URL requerida' }));
+          }
+
+          const tinyRes = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);
+          const shortUrl = await tinyRes.text();
+          res.setHeader('Content-Type', 'application/json');
+          if (shortUrl && shortUrl.startsWith('http')) {
+            res.end(JSON.stringify({ success: true, shortUrl: shortUrl.trim() }));
+          } else {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: 'No se pudo acortar' }));
+          }
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
     }
   };
 }

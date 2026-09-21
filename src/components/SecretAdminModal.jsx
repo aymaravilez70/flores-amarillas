@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Copy, Check, MessageCircle, Sparkles, Lock, 
   History, Trash2, Upload, Image as ImageIcon, ExternalLink,
-  ChevronLeft, ChevronRight, Edit3, Camera
+  ChevronLeft, ChevronRight, Edit3, Camera, Link2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { synth } from '../audio/synthMelody';
@@ -26,7 +26,16 @@ export default function SecretAdminModal({
   const [copied, setCopied] = useState(false);
   const [savedLinks, setSavedLinks] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [shortUrl, setShortUrl] = useState('');
+  const [isShortening, setIsShortening] = useState(false);
+  const [shortenError, setShortenError] = useState('');
   const fileInputRef = useRef(null);
+
+  // Resetear URL corta cuando cambien los datos para mantener consistencia
+  useEffect(() => {
+    setShortUrl('');
+    setShortenError('');
+  }, [flowers, recipient, sender]);
 
   // Cargar historial desde localStorage
   useEffect(() => {
@@ -133,28 +142,73 @@ export default function SecretAdminModal({
     }
   };
 
-  // Generar Token en Base64 URL-Safe
+  // Generar Token en Base64 URL-Safe optimizado (solo incluye los cambios)
   const generateLink = () => {
     const baseUrl = window.location.origin + window.location.pathname;
+
+    // Solo incluimos las flores que realmente tienen foto o texto modificado
+    const changedFlowers = [];
+    flowers.forEach(f => {
+      const def = DEFAULT_FLOWERS.find(d => d.id === f.id) || DEFAULT_FLOWERS[f.id] || {};
+      const item = { i: f.id };
+      let hasChange = false;
+
+      if (f.foto && f.foto.trim()) {
+        item.pic = f.foto.trim();
+        hasChange = true;
+      }
+      if (f.titulo && f.titulo.trim() !== (def.titulo || "").trim()) {
+        item.t = f.titulo.trim();
+        hasChange = true;
+      }
+      if (f.msg && f.msg.trim() !== (def.msg || "").trim()) {
+        item.m = f.msg.trim();
+        hasChange = true;
+      }
+
+      if (hasChange) {
+        changedFlowers.push(item);
+      }
+    });
+
     const payload = {
-      para: recipient.trim() || "Amiga",
-      de: sender.trim() || "Aymar",
-      flores: flowers.map(f => ({
-        id: f.id,
-        titulo: f.titulo,
-        msg: f.msg,
-        foto: f.foto || ""
-      }))
+      p: recipient.trim() || "Amiga",
+      d: sender.trim() || "Aymar"
     };
+
+    if (changedFlowers.length > 0) {
+      payload.f = changedFlowers;
+    }
 
     const b64 = encodeToken(payload);
     return `${baseUrl}?v=${b64}`;
   };
 
   const currentUrl = generateLink();
+  const finalShareUrl = shortUrl || currentUrl;
+
+  const handleShorten = async () => {
+    if (shortUrl) return;
+    setIsShortening(true);
+    setShortenError('');
+    try {
+      const res = await fetch(`/api/shorten?url=${encodeURIComponent(currentUrl)}`);
+      const data = await res.json();
+      if (data.success && data.shortUrl) {
+        setShortUrl(data.shortUrl);
+        synth.playSparkle();
+      } else {
+        setShortenError(data.error || 'No se pudo acortar.');
+      }
+    } catch (e) {
+      setShortenError('Error al conectar con el servicio de acortado');
+    } finally {
+      setIsShortening(false);
+    }
+  };
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(currentUrl);
+    navigator.clipboard.writeText(finalShareUrl);
     setCopied(true);
     synth.playSparkle();
     setTimeout(() => setCopied(false), 2500);
@@ -163,7 +217,7 @@ export default function SecretAdminModal({
 
   const handleSendWhatsApp = () => {
     const friendName = recipient.trim() || "amiga";
-    const text = `🌻 ¡Hola ${friendName}! Te envié un ramo 3D de flores amarillas con recuerdos y fotos pensados para ti por este 21 de septiembre 💛✨ Toca cada flor del ramo para descubrirlos: ${currentUrl}`;
+    const text = `🌻 ¡Hola ${friendName}! Te envié un ramo 3D de flores amarillas con recuerdos y fotos pensados para ti por este 21 de septiembre 💛✨ Toca cada flor del ramo para descubrirlos: ${finalShareUrl}`;
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank');
     saveToHistory();
@@ -176,7 +230,7 @@ export default function SecretAdminModal({
       recipient: recipient.trim(),
       sender: sender.trim() || "Aymar",
       date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      url: currentUrl,
+      url: finalShareUrl,
       flowers: flowers
     };
 
@@ -432,14 +486,33 @@ export default function SecretAdminModal({
             <span className="font-semibold text-yellow-400">
               Enlace exclusivo para {recipient.trim() || "tu amiga"}:
             </span>
-            <span className="text-[10px] text-slate-400">
-              Token individual con fotos
-            </span>
+            <div className="flex items-center gap-1.5">
+              {shortUrl ? (
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1">
+                  ✓ TinyURL activo
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleShorten}
+                  disabled={isShortening}
+                  className="flex items-center gap-1 text-[10px] text-amber-300 hover:text-yellow-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 px-2 py-0.5 rounded-lg transition-all cursor-pointer disabled:opacity-50"
+                  title="Hacer el enlace aún más corto"
+                >
+                  <Link2 className="w-3 h-3" />
+                  <span>{isShortening ? 'Acortando...' : 'Acortar con TinyURL'}</span>
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="text-[11px] font-mono p-2 rounded-lg bg-slate-950/70 text-slate-400 truncate border border-slate-800">
-            {currentUrl}
+          <div className="text-[11px] font-mono p-2 rounded-lg bg-slate-950/70 text-slate-300 break-all border border-slate-800">
+            {finalShareUrl}
           </div>
+
+          {shortenError && (
+            <p className="text-[11px] text-rose-400 font-medium">⚠️ {shortenError}</p>
+          )}
 
           <div className="flex gap-2 pt-1">
             <button
