@@ -49,57 +49,87 @@ export default function SecretAdminModal({
     });
   };
 
+  const [uploadError, setUploadError] = useState("");
+
+  // Comprimir imagen en el cliente para que suba en 0.5s y no exceda límites
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 1200;
+
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve(dataUrl);
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   // Manejador de subida de fotos desde Celular o PC
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const base64 = event.target.result;
-        try {
-          // 1. Intento de subida a nuestro endpoint local /api/upload
-          const res = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, base64 })
-          });
-          const data = await res.json();
-          if (data.success && data.url) {
-            updateFlower(activeFlowerIdx, { foto: data.url });
-            synth.playSparkle();
-          } else {
-            // Fallback externo
-            await uploadExternalFallback(file);
-          }
-        } catch (uploadErr) {
-          // Fallback externo
-          await uploadExternalFallback(file);
-        } finally {
-          setIsUploading(false);
-        }
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
-      console.error("Error al leer archivo:", err);
-      setIsUploading(false);
-    }
-  };
+    setUploadError("");
 
-  const uploadExternalFallback = async (file) => {
     try {
-      const fd = new FormData();
-      fd.append('files[]', file);
-      const res = await fetch('https://uguu.se/upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (data.success && data.files?.[0]?.url) {
-        updateFlower(activeFlowerIdx, { foto: data.files[0].url });
-        synth.playSparkle();
+      // 1. Comprimir en el cliente a JPG de alta calidad (~150KB)
+      const compressedBase64 = await compressImage(file);
+
+      // 2. Subir a nuestro endpoint /api/upload (Vercel serverless o Vite local)
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: `foto_${Date.now()}.jpg`,
+          base64: compressedBase64
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.url) {
+          updateFlower(activeFlowerIdx, { foto: data.url });
+          synth.playSparkle();
+          setIsUploading(false);
+          return;
+        } else {
+          setUploadError(data.error || "No se pudo subir la foto.");
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setUploadError(errData.error || `Error ${res.status}: No se pudo subir la imagen.`);
       }
-    } catch (e) {
-      console.warn("Fallo fallback externo:", e);
+    } catch (err) {
+      console.error("Error al procesar foto:", err);
+      setUploadError("Error de conexión al subir. Puedes pegar un enlace directo.");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -381,7 +411,7 @@ export default function SecretAdminModal({
                   <button
                     type="button"
                     onClick={() => updateFlower(activeFlowerIdx, { foto: "" })}
-                    className="absolute inset-0 bg-red-600/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity"
+                    className="absolute inset-0 bg-red-600/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity cursor-pointer"
                     title="Eliminar foto"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -389,6 +419,10 @@ export default function SecretAdminModal({
                 </div>
               )}
             </div>
+
+            {uploadError && (
+              <p className="text-[11px] text-rose-400 mt-1 font-medium">⚠️ {uploadError}</p>
+            )}
           </div>
         </div>
 
